@@ -240,6 +240,7 @@ class Kecontact extends utils.Adapter {
         this.log.debug(`config pollInterval: ${this.config.pollInterval}`);
         this.log.debug(`config loadChargingSessions: ${this.config.loadChargingSessions}`);
         this.log.debug(`config lessInfoLogs: ${this.config.lessInfoLogs}`);
+        this.log.debug(`config failsafeMode: ${this.config.failsafeMode}`);
         this.log.debug(`config useX1forAutomatic: ${this.config.useX1forAutomatic}`);
         this.log.debug(`config authChargingTime: ${this.config.authChargingTime}`);
         this.log.debug(`config stateRegard: ${this.config.stateRegard}`);
@@ -346,6 +347,7 @@ class Kecontact extends utils.Adapter {
 
                 this.disableChargingTimer();
                 if (this.timerFailsafe) {
+                    this.log.debug('stopping failsafe keep-alive timer');
                     this.clearInterval(this.timerFailsafe);
                 }
 
@@ -873,10 +875,14 @@ class Kecontact extends utils.Adapter {
         this.enableChargingTimer(this.isPassive ? this.intervalPassiveUpdate : this.intervalActiceUpdate);
         if (this.config.failsafeMode) {
             // keep-alive: resend current limit within the failsafe timeout
+            this.log.debug('starting failsafe keep-alive timer (interval 20 s)');
             this.timerFailsafe = this.setInterval(() => {
                 const current = this.getStateInternal(this.stateWallboxCurrent);
                 if (current != null) {
-                    this.sendUdpDatagram(`curr ${parseInt(current)}`, true);
+                    this.log.debug(`failsafe keep-alive: sending currtime ${parseInt(current)} 1`);
+                    this.sendUdpDatagram(`currtime ${parseInt(current)} 1`, true);
+                } else {
+                    this.log.debug('failsafe keep-alive skipped: current value not yet known');
                 }
             }, 20 * 1000);
         }
@@ -1293,11 +1299,17 @@ class Kecontact extends utils.Adapter {
                 }
             }
         } else {
-            if (message.ID == 2 && this.config.failsafeMode && (message['Tmo FS'] !== 60 || message['Curr FS'] !== 0)) {
-                this.log.info(
-                    `setting failsafe mode (Tmo FS=${message['Tmo FS']}, Curr FS=${message['Curr FS']}) to 60 s / 0 mA`,
-                );
-                this.sendUdpDatagram('failsafe 60 0 1', true);
+            if (message.ID == 2 && this.config.failsafeMode) {
+                if (message['Tmo FS'] !== 60 || message['Curr FS'] !== 0) {
+                    this.log.info(
+                        `setting failsafe mode (Tmo FS=${message['Tmo FS']}, Curr FS=${message['Curr FS']}) to 60 s / 0 mA`,
+                    );
+                    this.sendUdpDatagram('failsafe 60 0 1', true);
+                } else {
+                    this.log.debug(
+                        `failsafe mode already set (Tmo FS=${message['Tmo FS']}, Curr FS=${message['Curr FS']})`,
+                    );
+                }
             }
             for (const key in message) {
                 if (this.states[key]) {
