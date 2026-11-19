@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "使用电池存储来维持以最小电流给车辆充电",
     "useX1forAutomatic": "使用X1开关进行光伏自动",
     "wallboxNotIncluded": "电表的功率不包括在电表中",
-    "watts": "瓦特"
+    "watts": "瓦特",
+    "failsafeMode": "故障安全模式",
+    "tooltip_failsafeMode": "如果适配器与wallbox断开连接或停止，wallbox将在60秒后应用0 mA的故障安全电流（不充电）"
 }

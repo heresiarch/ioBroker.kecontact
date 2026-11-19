@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "use battery storage to uphold charging vehicle with minimum current",
     "useX1forAutomatic": "use X1 switch for photovoltaic automatic",
     "wallboxNotIncluded": "power of wallbox NOT included in energy meter(s)",
-    "watts": "watts"
+    "watts": "watts",
+    "failsafeMode": "fail-safe mode on connection loss",
+    "tooltip_failsafeMode": "if the adapter loses its connection to the wallbox or stops, the wallbox applies a fail-safe current after 60 seconds, which is set to 0 mA (no charging)"
 }

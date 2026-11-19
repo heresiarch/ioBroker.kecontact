@@ -38,6 +38,31 @@ class Kecontact extends utils.Adapter {
     stateChangeListeners = {};
     currentStateValues = {}; // contains all actual state values
     sendQueue = [];
+
+    FAILSAFE_TIMEOUT_SEC = 60;
+    FAILSAFE_CURRENT_MA = 0;
+    FAILSAFE_COMMAND = 'failsafe 60 0 1';
+    FAILSAFE_MAX_ATTEMPTS = 3;
+    FAILSAFE_RESPONSE_TIMEOUT_MS = 10 * 1000;
+    KEEP_ALIVE_INTERVAL_MS = 20 * 1000;
+
+    failsafeActive = false; // set in checkConfig from config.failsafeMode === true
+    failsafeAttempts = 0; // sent commands since last confirmed match
+    failsafeGaveUp = false; // true after the 3rd failed attempt, until restart
+    failsafeInFlight = false; // a failsafe command was sent and not yet answered
+    // eslint-disable-next-line jsdoc/check-tag-names
+    /** @type {ioBroker.Timeout | undefined} */
+    failsafeInFlightTimer = undefined; // 10 s answer timeout
+    failsafeTriggered = false; // wallbox is currently in failsafe state
+    failsafeRecoveryPending = false; // next regulation cycle must re-send currtime + ena
+    failsafeStoredWarned = false; // option off: warning already written in this run
+    // eslint-disable-next-line jsdoc/check-tag-names
+    /** @type {ioBroker.Interval | undefined} */
+    keepAliveTimer = undefined;
+    // eslint-disable-next-line jsdoc/check-tag-names
+    /** @type {number | null} */
+    keepAliveCurrent = null; // last known/commanded 'curr user' in mA
+    expectedResponses = []; // FIFO of command kinds awaiting TCH-OK/TCH-ERR
     MODEL_P20 = 1; // product ID is like KC-P20-ES240030-000-ST
     MODEL_P30 = 2;
     MODEL_BMW = 3; // product ID is like BMW-10-EC2405B2-E1R
@@ -239,6 +264,7 @@ class Kecontact extends utils.Adapter {
         this.log.debug(`config pollInterval: ${this.config.pollInterval}`);
         this.log.debug(`config loadChargingSessions: ${this.config.loadChargingSessions}`);
         this.log.debug(`config lessInfoLogs: ${this.config.lessInfoLogs}`);
+        this.log.debug(`config failsafeMode: ${this.config.failsafeMode}`);
         this.log.debug(`config useX1forAutomatic: ${this.config.useX1forAutomatic}`);
         this.log.debug(`config authChargingTime: ${this.config.authChargingTime}`);
         this.log.debug(`config stateRegard: ${this.config.stateRegard}`);
@@ -340,10 +366,15 @@ class Kecontact extends utils.Adapter {
             // Here you must clear all timeouts or intervals that may still be active
             try {
                 if (this.sendDelayTimer) {
-                    clearInterval(this.sendDelayTimer);
+                    this.clearInterval(this.sendDelayTimer);
                 }
 
                 this.disableChargingTimer();
+                this.disableKeepAliveTimer();
+                if (this.failsafeInFlightTimer) {
+                    this.clearTimeout(this.failsafeInFlightTimer);
+                    this.failsafeInFlightTimer = undefined;
+                }
 
                 if (this.txSocket !== null) {
                     this.txSocket.close();
@@ -866,6 +897,9 @@ class Kecontact extends utils.Adapter {
 
         //sendUdpDatagram('i');   only needed for discovery
         this.requestReports();
+        if (this.failsafeActive) {
+            this.restartKeepAliveTimer();
+        }
         this.enableChargingTimer(this.isPassive ? this.intervalPassiveUpdate : this.intervalActiceUpdate);
     }
 
@@ -917,6 +951,7 @@ class Kecontact extends utils.Adapter {
         if (this.config.loadChargingSessions === true) {
             this.loadChargingSessions = true;
         }
+        this.failsafeActive = this.config.failsafeMode === true;
         this.isPassive = false;
         if (this.config.passiveMode) {
             this.isPassive = true;
@@ -1225,11 +1260,13 @@ class Kecontact extends utils.Adapter {
 
             if (msg.startsWith('TCH-OK')) {
                 this.log.debug(`Received ${message}`);
+                this.handleTchResponse(true);
                 return;
             }
 
             if (msg.startsWith('TCH-ERR')) {
                 this.log.error(`Error received from wallbox: ${message}`);
+                this.handleTchResponse(false);
                 return;
             }
 
@@ -1297,6 +1334,9 @@ class Kecontact extends utils.Adapter {
                 } else if (key != 'ID') {
                     this.log.warn(`Unknown value received: ${key}=${message[key]}`);
                 }
+            }
+            if (message.ID == 2) {
+                this.handleFailsafeReport(message);
             }
             if (message.ID == 3) {
                 // Do calculation after processing 'report 3'
@@ -1483,6 +1523,12 @@ class Kecontact extends utils.Adapter {
             oldValue = 0;
         }
 
+        const isFailsafeRecovery = this.failsafeRecoveryPending === true;
+        if (isFailsafeRecovery) {
+            // wallbox lost its settings in failsafe mode: force re-send of currtime and ena
+            oldValue = milliAmpere > 0 ? 0 : -1;
+        }
+
         if (milliAmpere != oldValue) {
             if (milliAmpere == 0) {
                 this.log.info(`stop charging ${this.isMaxPowerCalculation === true ? ' (maxPower)' : ''}`);
@@ -1501,6 +1547,12 @@ class Kecontact extends utils.Adapter {
                 }
             }
             this.sendUdpDatagram(`currtime ${milliAmpere} 1`, true);
+            if (isFailsafeRecovery) {
+                const enable = milliAmpere > 0 ? true : this.getStateDefaultFalse(this.stateWallboxEnabled);
+                this.sendUdpDatagram(`ena ${enable ? 1 : 0}`, true);
+                this.failsafeRecoveryPending = false;
+                this.log.info('failsafe recovery: charging settings re-sent to wallbox');
+            }
             if (isState5RecoveryAttempt) {
                 this.state5RecoveryAttempts++;
                 this.state5RecoveryLastAttempt = Date.now();
@@ -2756,11 +2808,205 @@ class Kecontact extends utils.Adapter {
         }
     }
 
-    sendUdpDatagram(message, highPriority) {
-        if (highPriority) {
-            this.sendQueue.unshift(message);
+    /**
+     * True for commands that keep the wallbox failsafe timeout from expiring.
+     *
+     * @param message UDP command text
+     */
+    isFailsafeResettingCommand(message) {
+        return typeof message === 'string' && /^(curr|currtime|ena)( |$)/.test(message);
+    }
+
+    /**
+     * Handle TCH-OK / TCH-ERR: link the answer to the oldest command awaiting one.
+     *
+     * @param ok true for TCH-OK, false for TCH-ERR
+     */
+    handleTchResponse(ok) {
+        const kind = this.expectedResponses.shift();
+        if (kind === 'failsafe') {
+            this.onFailsafeAnswer(ok);
+        }
+    }
+
+    /**
+     * Pure decision for a Report 2 payload. Does not send or log.
+     *
+     * @param report parsed Report 2 payload
+     * @returns decision flags
+     */
+    evaluateFailsafeReport(report) {
+        const isNum = v => typeof v === 'number' && Number.isFinite(v);
+        const result = { sendCommand: false, storedWarning: false, triggeredNow: false };
+        if (!report || typeof report !== 'object') {
+            return result;
+        }
+        const tmo = report['Tmo FS'];
+        const curr = report['Curr FS'];
+        if (this.failsafeActive) {
+            if (isNum(tmo) && isNum(curr)) {
+                result.sendCommand = tmo !== this.FAILSAFE_TIMEOUT_SEC || curr !== this.FAILSAFE_CURRENT_MA;
+            }
+            result.triggeredNow =
+                isNum(report['Enable sys']) &&
+                isNum(report['Max curr']) &&
+                isNum(curr) &&
+                report['Enable sys'] === 0 &&
+                report['Max curr'] === curr;
         } else {
-            this.sendQueue.push(message);
+            result.storedWarning = isNum(tmo) && tmo > 0;
+        }
+        return result;
+    }
+
+    /**
+     * Apply failsafe decisions for a received Report 2.
+     *
+     * @param report parsed Report 2 payload
+     */
+    handleFailsafeReport(report) {
+        if (!report || typeof report !== 'object') {
+            return;
+        }
+        const currUser = report['Curr user'];
+        if (typeof currUser === 'number' && Number.isFinite(currUser)) {
+            this.keepAliveCurrent = currUser;
+        }
+        const decision = this.evaluateFailsafeReport(report);
+        if (this.failsafeActive) {
+            if (report['Tmo FS'] === this.FAILSAFE_TIMEOUT_SEC && report['Curr FS'] === this.FAILSAFE_CURRENT_MA) {
+                this.failsafeAttempts = 0;
+            }
+            if (
+                decision.sendCommand &&
+                !this.failsafeInFlight &&
+                !this.failsafeGaveUp &&
+                this.failsafeAttempts < this.FAILSAFE_MAX_ATTEMPTS
+            ) {
+                this.sendFailsafeCommand();
+            }
+            if (decision.triggeredNow) {
+                if (!this.failsafeTriggered) {
+                    this.failsafeTriggered = true;
+                    this.failsafeRecoveryPending = true;
+                    this.log.warn(
+                        'Wallbox has triggered failsafe mode (no command received within the failsafe timeout), charging is stopped. Charging is restored with the next regulation cycle.',
+                    );
+                }
+            } else {
+                this.failsafeTriggered = false;
+            }
+        } else if (decision.storedWarning && !this.failsafeStoredWarned) {
+            this.failsafeStoredWarned = true;
+            this.log.warn(
+                `Wallbox has failsafe mode stored (timeout ${report['Tmo FS']} s), but failsafe mode is disabled in the adapter configuration. Setting is left unchanged.`,
+            );
+        }
+    }
+
+    /** Send the failsafe command to the wallbox. */
+    sendFailsafeCommand() {
+        this.failsafeAttempts++;
+        this.failsafeInFlight = true;
+        this.log.info(
+            `Enabling failsafe mode on wallbox (timeout ${this.FAILSAFE_TIMEOUT_SEC} s, current ${this.FAILSAFE_CURRENT_MA} mA, saved permanently), attempt ${this.failsafeAttempts}`,
+        );
+        this.sendUdpDatagram(this.FAILSAFE_COMMAND, true, 'failsafe');
+    }
+
+    /** Start the answer timeout for a transmitted failsafe command. */
+    startFailsafeAnswerTimer() {
+        this.clearFailsafeAnswerTimer();
+        this.failsafeInFlightTimer = this.setTimeout(() => {
+            this.failsafeInFlightTimer = undefined;
+            if (!this.failsafeInFlight) {
+                return;
+            }
+            // late answers must not be linked to later commands
+            this.expectedResponses = [];
+            this.log.error(
+                `No answer from wallbox to "${this.FAILSAFE_COMMAND}" within ${this.FAILSAFE_RESPONSE_TIMEOUT_MS / 1000} s`,
+            );
+            this.finishFailedFailsafeAttempt();
+        }, this.FAILSAFE_RESPONSE_TIMEOUT_MS);
+    }
+
+    clearFailsafeAnswerTimer() {
+        if (this.failsafeInFlightTimer) {
+            this.clearTimeout(this.failsafeInFlightTimer);
+            this.failsafeInFlightTimer = undefined;
+        }
+    }
+
+    finishFailedFailsafeAttempt() {
+        this.failsafeInFlight = false;
+        if (this.failsafeAttempts >= this.FAILSAFE_MAX_ATTEMPTS && !this.failsafeGaveUp) {
+            this.failsafeGaveUp = true;
+            this.log.error(
+                `Failsafe mode could not be enabled on wallbox after ${this.failsafeAttempts} attempts, giving up until adapter restart`,
+            );
+        }
+    }
+
+    /**
+     * Handle the wallbox answer to the failsafe command.
+     *
+     * @param ok true if the wallbox answered TCH-OK
+     */
+    onFailsafeAnswer(ok) {
+        this.clearFailsafeAnswerTimer();
+        if (ok) {
+            this.failsafeInFlight = false;
+            this.setTimeout(() => this.requestCurrentChargingSessionDataReport(), 1000);
+            return;
+        }
+        this.log.error(`Wallbox rejected failsafe command "${this.FAILSAFE_COMMAND}"`);
+        this.finishFailedFailsafeAttempt();
+    }
+
+    /** Keep-alive command from the last known 'curr user', or null if unknown. */
+    getKeepAliveCommand() {
+        return typeof this.keepAliveCurrent === 'number' && Number.isFinite(this.keepAliveCurrent)
+            ? `curr ${this.keepAliveCurrent}`
+            : null;
+    }
+
+    /** Restart the keep-alive timer (no-op if failsafe mode is off). */
+    restartKeepAliveTimer() {
+        if (!this.failsafeActive) {
+            return;
+        }
+        this.disableKeepAliveTimer();
+        this.keepAliveTimer = this.setInterval(() => this.sendKeepAlive(), this.KEEP_ALIVE_INTERVAL_MS);
+    }
+
+    /** Stop the keep-alive timer. */
+    disableKeepAliveTimer() {
+        if (this.keepAliveTimer) {
+            this.clearInterval(this.keepAliveTimer);
+            this.keepAliveTimer = undefined;
+        }
+    }
+
+    /** Timer callback: send `curr <value>` as keep-alive, or request Report 2 if the value is unknown. */
+    sendKeepAlive() {
+        const cmd = this.getKeepAliveCommand();
+        if (cmd === null) {
+            this.requestCurrentChargingSessionDataReport();
+            return;
+        }
+        if (this.sendQueue.some(entry => entry && typeof entry === 'object' && entry.kind === 'keepalive')) {
+            return;
+        }
+        this.sendUdpDatagram(cmd, true, 'keepalive');
+    }
+
+    sendUdpDatagram(message, highPriority, kind) {
+        const entry = { message, kind };
+        if (highPriority) {
+            this.sendQueue.unshift(entry);
+        } else {
+            this.sendQueue.push(entry);
         }
         if (!this.sendDelayTimer) {
             this.sendNextQueueDatagram();
@@ -2771,22 +3017,49 @@ class Kecontact extends utils.Adapter {
     sendNextQueueDatagram() {
         if (this.sendQueue.length === 0) {
             if (this.sendDelayTimer) {
-                clearInterval(this.sendDelayTimer);
+                this.clearInterval(this.sendDelayTimer);
                 this.sendDelayTimer = undefined;
             }
             return;
         }
-        const message = this.sendQueue.shift();
+        const entry = this.sendQueue.shift();
+        const message = typeof entry === 'string' ? entry : entry.message;
+        const kind = typeof entry === 'string' ? undefined : entry.kind;
         if (this.txSocket) {
             try {
                 this.txSocket.send(message, 0, message.length, this.DEFAULT_UDP_PORT, this.config.host, err => {
                     // 2nd parameter 'bytes' not needed, therefore only 'err' coded
                     if (err) {
-                        this.log.warn(`UDP send error for ${this.config.host}:${this.DEFAULT_UDP_PORT}: ${err}`);
+                        if (kind === 'keepalive') {
+                            this.log.warn(
+                                `Failsafe keep-alive "${message}" could not be sent to ${this.config.host}:${this.DEFAULT_UDP_PORT}: ${err}`,
+                            );
+                        } else {
+                            this.log.warn(`UDP send error for ${this.config.host}:${this.DEFAULT_UDP_PORT}: ${err}`);
+                        }
                         return;
                     }
                     this.log.debug(`Sent "${message}" to ${this.config.host}:${this.DEFAULT_UDP_PORT}`);
                 });
+                // report/i/start are answered with JSON, not TCH-OK/TCH-ERR
+                const command = String(message).trim().split(/\s+/)[0].toLowerCase();
+                if (kind || !['report', 'i', 'start'].includes(command)) {
+                    this.expectedResponses.push(kind || 'other');
+                    if (this.expectedResponses.length > 20) {
+                        this.expectedResponses.shift();
+                    }
+                }
+                if (kind === 'failsafe') {
+                    this.failsafeInFlight = true;
+                    this.startFailsafeAnswerTimer();
+                }
+                const currMatch = /^(?:curr|currtime) (-?\d+)/.exec(message);
+                if (currMatch) {
+                    this.keepAliveCurrent = parseInt(currMatch[1], 10);
+                }
+                if (this.isFailsafeResettingCommand(message)) {
+                    this.restartKeepAliveTimer();
+                }
             } catch (e) {
                 if (this.log) {
                     this.log.error(`Error sending message "${message}": ${e}`);

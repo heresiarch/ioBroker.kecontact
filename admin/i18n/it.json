@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "utilizzare la batteria per sostenere la ricarica del veicolo con una corrente minima",
     "useX1forAutomatic": "utilizzare l'interruttore X1 per il fotovoltaico automatico",
     "wallboxNotIncluded": "Potenza della wallbox NON inclusa nei contatori di energia",
-    "watts": "W"
+    "watts": "W",
+    "failsafeMode": "modalità failsafe",
+    "tooltip_failsafeMode": "se l'adattatore perde la connessione con la wallbox o si arresta, dopo 60 secondi la wallbox applica una corrente di sicurezza di 0 mA (nessuna ricarica)"
 }

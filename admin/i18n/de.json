@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "Batteriespeicher verwenden, um das Laden des Fahrzeugs mit minimalem Strom aufrechtzuerhalten",
     "useX1forAutomatic": "X1-Schalter für das Ein/Aus-Schalten der PV-Regelung nutzen",
     "wallboxNotIncluded": "Verbrauch der Wallbox bei keinem der Energy-Meter enthalten",
-    "watts": "W"
+    "watts": "W",
+    "failsafeMode": "Failsafe-Modus bei Verbindungsverlust",
+    "tooltip_failsafeMode": "wenn der Adapter die Verbindung zur Wallbox verliert oder gestoppt wird, setzt die Wallbox nach 60 Sekunden den Failsafe-Strom auf 0 mA (kein Laden)"
 }

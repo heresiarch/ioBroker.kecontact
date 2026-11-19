@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "korzystaj z magazynu akumulatorów, aby podtrzymać ładowanie pojazdu minimalnym prądem",
     "useX1forAutomatic": "Użyj przełącznika X1 do automatycznego fotowoltaicznego;",
     "wallboxNotIncluded": "Moc Wallbox NIE jest uwzględniona w licznikach energii",
-    "watts": "W"
+    "watts": "W",
+    "failsafeMode": "tryb awaryjny (failsafe)",
+    "tooltip_failsafeMode": "jeśli adapter straci połączenie z wallboxem lub zostanie zatrzymany, po 60 sekundach wallbox ustawia prąd awaryjny 0 mA (brak ładowania)"
 }

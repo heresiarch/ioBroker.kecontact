@@ -95,6 +95,18 @@ An extra checkbox is used to specified whether wallbox power is included (in thi
 An other option gives you the possibility not to limit power but amperage. With this options amperage of charging station will be reduced to not pass a maximum amperage of each phase.
 Therefore you need to specify the amperage states of each phase of your enegy meter. Please ensure, that phases of charging station and energy meter have the same numbering.
 
+### Failsafe mode
+
+Activate this option to enable the failsafe function of the KEBA wallbox (UDP Programmers Guide, section 4.3.3). If the wallbox receives no UDP command from the adapter for 60 seconds (e.g. because of a network or adapter failure), it stops charging by itself.
+
+* The timeout is fixed at 60 seconds and the failsafe current is fixed at 0 A (no charging). Neither value can be changed.
+* The adapter sends the command `failsafe 60 0 1` to the wallbox. The last parameter stores the setting in the EEPROM of the wallbox, so it survives a restart of the wallbox. The command is sent only if the wallbox reports different values, to avoid repeated EEPROM writes.
+* While the option is active, the adapter sends a keep-alive every 20 seconds (command `curr` with the current value of `currentUser`), which resets the failsafe timer of the wallbox without changing the current limit.
+* If the option is not active, the adapter sends neither failsafe nor keep-alive commands and leaves a failsafe setting stored in the wallbox unchanged. In this case a warning is logged once per adapter start if the wallbox has a failsafe timeout stored.
+* When failsafe mode was triggered, the adapter writes a warning to the log.
+
+The option is disabled by default.
+
 ### dynamic options
 
 Additionally there are some states to influence behaviour of photovoltaics automatic on the fly, e.g. by a script of your own updating these values according to your needs)
@@ -126,6 +138,7 @@ A german description of how the adapter works can be found [here](kecontact.md)
 * (Sneak-L8) fix host name issue [[#642](https://github.com/iobroker-community-adapters/ioBroker.kecontact/issues/642)]
 * (Sneak-L8) use build-in ioBroker messageBox to communicate between adapter instances instead of state internal.message (state can be deleted after update)
 * (GermanBluefox) respect automatic.1p3pCharging also when photovoltaics automatic is inactive (#643)
+* (copilot) new option "Failsafe mode": wallbox stops charging (0 A) if it receives no command for 60 seconds; adapter sends a keep-alive every 20 seconds
 
 ### 3.9.0 (2026-11-03)
 * (copilot) Adapter requires node.js >= 22.19.0 now

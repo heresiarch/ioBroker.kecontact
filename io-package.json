@@ -181,6 +181,7 @@
     "useX1forAutomatic": false,
     "authChargingTime": 60,
     "lessInfoLogs": false,
+    "failsafeMode": false,
     "stateRegard": "",
     "stateSurplus": "",
     "statesIncludeWallbox": true,

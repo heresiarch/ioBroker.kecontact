@@ -441,8 +441,8 @@ describe('issue #628 - PV automatics toggled on mid-session must not loop', () =
          * checkWallboxPower() cycle runs the PV (dynamic) charging branch with a strongly
          * negative surplus, reproducing the exact issue #628 scenario end to end.
          *
-         * @returns {{adapter: object, commands: number[]}} the adapter and the list of
-         *   milliAmpere values passed to regulateWallbox() during the cycle
+         * @returns {{adapter: object, commands: number[], datagrams: unknown[]}} the adapter, the
+         *   milliAmpere values passed to regulateWallbox() and the UDP datagram arguments sent
          */
         function createFullCycleAdapter() {
             const adapter = createAdapter();

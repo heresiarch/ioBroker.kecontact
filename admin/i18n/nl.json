@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "gebruik batterijopslag om het opladen van het voertuig met minimale stroom te ondersteunen",
     "useX1forAutomatic": "gebruik X1-schakelaar voor fotovoltaïsche automaat",
     "wallboxNotIncluded": "Vermogen van wallbox NIET inbegrepen in energiemeters",
-    "watts": "W"
+    "watts": "W",
+    "failsafeMode": "failsafe-modus",
+    "tooltip_failsafeMode": "als de adapter de verbinding met de wallbox verliest of stopt, past de wallbox na 60 seconden een failsafe-stroom van 0 mA toe (niet laden)"
 }

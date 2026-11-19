@@ -86,5 +86,7 @@
     "use-battery-for-minimum-charging": "utiliser le stockage de la batterie pour maintenir le véhicule en charge avec un courant minimum",
     "useX1forAutomatic": "utiliser le commutateur X1 pour le photovoltaïque automatique",
     "wallboxNotIncluded": "Puissance de la wallbox NON incluse dans les compteurs d'énergie",
-    "watts": "W"
+    "watts": "W",
+    "failsafeMode": "mode de sécurité (failsafe)",
+    "tooltip_failsafeMode": "si l'adaptateur perd la connexion avec la wallbox ou s'arrête, la wallbox applique après 60 secondes un courant de sécurité de 0 mA (pas de charge)"
 }
