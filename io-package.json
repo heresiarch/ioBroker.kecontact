@@ -176,6 +176,7 @@
   "native": {
     "host": "0.0.0.0",
     "passiveMode": true,
+    "failsafeMode": false,
     "pollInterval": 30,
     "loadChargingSessions": false,
     "useX1forAutomatic": false,

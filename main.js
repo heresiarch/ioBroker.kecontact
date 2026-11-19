@@ -64,6 +64,7 @@ class Kecontact extends utils.Adapter {
     // eslint-disable-next-line jsdoc/check-tag-names
     /** @type {ioBroker.Interval | undefined} */
     timerDataUpdate = undefined; // interval object for calculating timer
+    timerFailsafe = undefined; // keep-alive interval for failsafe mode
     intervalActiceUpdate = 15 * 1000; // check current power (and calculate PV-automatics/power limitation every 15 seconds (report 2+3))
     // eslint-disable-next-line jsdoc/check-tag-names
     /** @type {Date | null} */
@@ -344,6 +345,9 @@ class Kecontact extends utils.Adapter {
                 }
 
                 this.disableChargingTimer();
+                if (this.timerFailsafe) {
+                    this.clearInterval(this.timerFailsafe);
+                }
 
                 if (this.txSocket !== null) {
                     this.txSocket.close();
@@ -867,6 +871,15 @@ class Kecontact extends utils.Adapter {
         //sendUdpDatagram('i');   only needed for discovery
         this.requestReports();
         this.enableChargingTimer(this.isPassive ? this.intervalPassiveUpdate : this.intervalActiceUpdate);
+        if (this.config.failsafeMode) {
+            // keep-alive: resend current limit within the failsafe timeout
+            this.timerFailsafe = this.setInterval(() => {
+                const current = this.getStateInternal(this.stateWallboxCurrent);
+                if (current != null) {
+                    this.sendUdpDatagram(`curr ${parseInt(current)}`, true);
+                }
+            }, 20 * 1000);
+        }
     }
 
     /**
@@ -1280,6 +1293,12 @@ class Kecontact extends utils.Adapter {
                 }
             }
         } else {
+            if (message.ID == 2 && this.config.failsafeMode && (message['Tmo FS'] !== 60 || message['Curr FS'] !== 0)) {
+                this.log.info(
+                    `setting failsafe mode (Tmo FS=${message['Tmo FS']}, Curr FS=${message['Curr FS']}) to 60 s / 0 mA`,
+                );
+                this.sendUdpDatagram('failsafe 60 0 1', true);
+            }
             for (const key in message) {
                 if (this.states[key]) {
                     try {

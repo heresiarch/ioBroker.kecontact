@@ -592,3 +592,22 @@ describe('no vehicle plugged -> regulation loop must not run (PV automatics)', (
         expect(regulateCalls).to.include(8000);
     });
 });
+
+describe('failsafe mode', () => {
+    async function runReport2(failsafeMode, report) {
+        const adapter = createAdapter();
+        adapter.config = { failsafeMode };
+        adapter.states = {};
+        const datagrams = [];
+        adapter.sendUdpDatagram = (...args) => datagrams.push(args);
+        await adapter.handleJsonMessage({ ID: 2, ...report });
+        return datagrams;
+    }
+
+    it('sends "failsafe 60 0 1" only when enabled and Report 2 differs from 60 s / 0 mA', async () => {
+        expect(await runReport2(true, { 'Tmo FS': 30, 'Curr FS': 0 })).to.deep.equal([['failsafe 60 0 1', true]]);
+        expect(await runReport2(true, { 'Tmo FS': 60, 'Curr FS': 6000 })).to.deep.equal([['failsafe 60 0 1', true]]);
+        expect(await runReport2(true, { 'Tmo FS': 60, 'Curr FS': 0 })).to.deep.equal([]);
+        expect(await runReport2(false, { 'Tmo FS': 30, 'Curr FS': 6000 })).to.deep.equal([]);
+    });
+});

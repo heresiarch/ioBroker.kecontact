@@ -85,6 +85,10 @@ battery storage should be used for charging your vehicle or not, depenent from t
 
 Due to german §14a EnWG there's an option to limit charging station to max. 6A fix or dynamically to grid consumption of 3x6A (4.140 watts)
 
+### Failsafe mode
+
+If you activate this option, the adapter enables the failsafe function of the wallbox (`failsafe 60 0 1`): when the wallbox receives no command from the adapter for 60 seconds, it sets its charging current to 0 mA and stops charging. The adapter sends a keep-alive command every 20 seconds to prevent this while communication works. The setting is stored in the EEPROM of the wallbox.
+
 ### power limitation
 
 You can also limit max. power of your wallbox to limit main power. E.g. when running night-storage heaters you might have to respect a maximum power limitation.
@@ -126,6 +130,7 @@ A german description of how the adapter works can be found [here](kecontact.md)
 * (Sneak-L8) fix host name issue [[#642](https://github.com/iobroker-community-adapters/ioBroker.kecontact/issues/642)]
 * (Sneak-L8) use build-in ioBroker messageBox to communicate between adapter instances instead of state internal.message (state can be deleted after update)
 * (GermanBluefox) respect automatic.1p3pCharging also when photovoltaics automatic is inactive (#643)
+* (heresiarch) add optional failsafe mode: wallbox stops charging (0 mA) after 60 s without communication, adapter sends keep-alive every 20 s
 
 ### 3.9.0 (2026-11-03)
 * (copilot) Adapter requires node.js >= 22.19.0 now
